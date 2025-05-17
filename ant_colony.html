@@ -11,10 +11,283 @@
 <body>
   <main>
   </main>
-  <script src="ant.js"></script>
-  <script src="sketch.js"></script>
-  <script src="food.js"></script>
-  <script src="cell.js"></script>
+
+  <script>
+    let modes = { 1: "FOOD", 2: "NEST" };
+
+    function index(x, y) {
+      let i = floor((x / width) * cols);
+      let j = floor((y / height) * rows);
+      if (i < 0 || j < 0 || i > cols - 1 || j > rows - 1) {
+        return -1;
+      } else {
+        return i + j * cols;
+      }
+    }
+
+    let grad_grid_sz = 8;
+
+    class Ant {
+      constructor() {
+        this.reset();
+        this.alpha = random(80, 100);
+        this.hue = random(0, 100);
+        this.pickup_dist = 20;
+        this.size = 4;
+        this.pre = 0.25;
+        this.jit = 2;
+        this.speed = 5;
+        this.frames_till_jit = random(10, 50);
+        this.frames_till_drop = 1;//random(1, 2);
+        this.age = 0;
+        this.lifespan = random(150, 300);
+        this.pher_strength = 0.13;
+      }
+
+      reset() {
+        this.x = width / 2;
+        this.y = height / 2;
+        this.vx = random(-10, 10);
+        this.vy = random(-10, 10);
+        this.mode = 1;
+      }
+
+      show() {
+        let col;
+        if (modes[this.mode] === "NEST") {
+          col = nest_col;
+        } else if (modes[this.mode] == "FOOD") {
+          col = food_col;
+        }
+        fill(col, 65, 60, this.alpha);
+        noStroke();
+        ellipse(this.x, this.y, this.size);
+      }
+
+      brighten(ind, grid, val) {
+        if (ind > -1) {
+          let cell = grid[ind];
+          cell.bright = constrain(cell.bright + val, 0, 100);
+        }
+      }
+
+      getGrad(grid) {
+        let cnt = 0;
+        let cell;
+        let sum_x = 0;
+        let sum_y = 0;
+        let sum_bright = 0;
+        for (let i = -grad_grid_sz; i < grad_grid_sz + 1; i++) {
+          for (let j = -grad_grid_sz; j < grad_grid_sz + 1; j++) {
+            let ind = index(this.x + i * wid, this.y + j * hei);
+            if (i != 0 && j != 0 && ind > -1) {
+              cell = grid[ind];
+              cnt++;
+              let bright = cell.bright;
+              sum_x += (cell.x + wid / 2 - this.x) * bright;
+              sum_y += (cell.y + hei / 2 - this.y) * bright;
+              sum_bright += bright;
+            }
+          }
+        }
+        sum_x /= cnt * sum_bright;
+        sum_y /= cnt * sum_bright;
+        if (cnt == 0 || sum_bright == 0) {
+          return { x: 0.6 * this.vx, y: 0.6 * this.vy };
+        } else {
+          return { x: sum_x, y: sum_y };
+        }
+      }
+
+      drop(ind, grid) {
+        this.brighten(ind, grid, this.pher_strength);
+      }
+
+      update() {
+        this.age++;
+        let grid = [];
+        let ind = index(this.x, this.y);
+        let grad = { x: 0, y: 0 };
+
+        if (modes[this.mode] === "FOOD") {
+          if (frameCount % this.frames_till_drop == 0) {
+            this.drop(ind, nest_grid);
+          }
+          grad = this.getGrad(food_grid);
+        }
+
+        if (modes[this.mode] === "NEST") {
+          if (frameCount % this.frames_till_drop == 0) {
+            this.drop(ind, food_grid);
+          }
+          grad = this.getGrad(nest_grid);
+        }
+
+        if (this.x <= 0 || this.x >= width || this.y <= 0 || this.y >= height) {
+          this.reset();
+        }
+
+        this.x = constrain(this.x + this.vx, 0, width);
+        this.y = constrain(this.y + this.vy, 0, height);
+
+        let rnd_x = 0;
+        let rnd_y = 0;
+        if (frameCount % round(this.frames_till_jit) == 0) {
+          rnd_x = random(-this.jit, this.jit);
+          rnd_y = random(-this.jit, this.jit);
+        }
+        this.vx = this.pre * this.vx + grad.x + rnd_x;
+        this.vy = this.pre * this.vy + grad.y + rnd_y;
+
+        let hyp = Math.sqrt(this.vx ** 2 + this.vy ** 2);
+        this.vx *= this.speed / hyp;
+        this.vy *= this.speed / hyp;
+
+        for (let food of foods) {
+          let dist_to_food = dist(this.x, this.y, food.x, food.y);
+          if (dist_to_food < this.pickup_dist && food.amt > 0) {
+            this.drop(ind, food_grid);
+            food.amt--;
+            this.mode = 2; // "NEST";
+          }
+        }
+
+        let dist_to_nest = dist(this.x, this.y, nest.x, nest.y);
+        if (dist_to_nest < this.pickup_dist) {
+          this.mode = 1; // "FOOD";
+        }
+      }
+    }
+  </script>
+
+  <script>
+    let cols = 120;
+    let rows = 80;
+
+    let wid, hei;
+    let nest_grid = [];
+    let food_grid = [];
+
+    let nest_col = 32;
+    let food_col = 71;
+
+    let show_grids = false;//true;//
+
+    let ants = [];
+    let n_ants = 1500;
+    let n_spawn = 10;
+
+    let nest;
+    let foods = [];
+
+    function setup() {
+      createCanvas(1200, 1200);
+      colorMode(HSB, 100);
+      nest = { x: width / 2, y: height / 2 };
+      wid = floor(width / cols);
+      hei = floor(height / rows);
+      for (let j = 0; j < rows; j++) {
+        for (let i = 0; i < cols; i++) {
+          food_grid.push(new Cell(i, j, food_col));
+          nest_grid.push(new Cell(i, j, nest_col));
+        }
+      }
+
+      for (let i = 0; i < n_spawn; i++) {
+        ants.push(new Ant());
+      }
+    }
+
+    function draw() {
+      background(220);
+
+      nest_grid[index(nest.x, nest.y)].bright = 10000;
+
+      ants = ants.filter(function (val) {
+        return val.age < val.lifespan;
+      });
+
+      if (ants.length < n_ants && frameCount % 4 == 0) {
+        for (let i = 0; i < n_spawn; i++) {
+          ants.push(new Ant());
+        }
+      }
+
+      for (let cell of food_grid) {
+        cell.show();
+        cell.update();
+      }
+
+      for (let cell of nest_grid) {
+        cell.show();
+        cell.update();
+      }
+
+      for (let ant of ants) {
+        ant.show();
+        ant.update();
+      }
+
+      foods = foods.filter(function (val) { return val.amt > 0; })
+      for (let food of foods) {
+        food.show();
+        food.update();
+      }
+
+      noStroke();
+      fill(20, 100, 100);
+      ellipse(nest.x, nest.y, 40);
+    }
+
+
+
+    function mouseClicked() {
+      foods.push(new Food(mouseX, mouseY));
+    }
+  </script>
+
+  <script>
+    class Food {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.amt = random(1000, 5000);
+      }
+
+      show() {
+        noStroke();
+        fill(50, 100, 100);
+        rect(this.x, this.y, 20, 20);
+      }
+
+      update() {
+        food_grid[index(this.x, this.y)].bright = 10000;
+      }
+    }
+  </script>
+
+  <script>
+    class Cell {
+      constructor(i, j, hue) {
+        this.x = i * wid;
+        this.y = j * hei;
+        this.hue = hue;
+        this.bright = 0;
+        this.decay = 0.14;
+      }
+
+      show() {
+        if (show_grids) {
+          fill(this.hue, 85, this.bright, 50);
+          rect(this.x, this.y, wid, hei);
+        }
+      }
+
+      update() {
+        this.bright = constrain(this.bright - this.decay, 0, 100);
+      }
+    }
+  </script>
 
 
 </body>
